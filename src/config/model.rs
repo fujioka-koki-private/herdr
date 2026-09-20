@@ -871,6 +871,10 @@ pub enum PaneBorderWeightConfig {
     #[default]
     Thin,
     Heavy,
+    /// Full block glyph (`█`) filling the entire border cell. Thicker than
+    /// `heavy` and ignores junction shape (corners/T-joints/crossings all
+    /// render the same solid block).
+    Block,
 }
 
 /// How the focused pane's border (and title) is emphasized.
@@ -958,8 +962,8 @@ pub struct UiConfig {
     /// disables them. Legacy booleans map true to auto and false to off.
     /// Default: auto.
     pub pane_borders: PaneBordersConfig,
-    /// Pane border glyph weight (thin or heavy box-drawing characters).
-    /// Default: thin.
+    /// Pane border glyph weight: thin/heavy box-drawing characters, or a
+    /// solid block glyph. Default: thin.
     pub pane_border_weight: PaneBorderWeightConfig,
     /// How the focused pane's border and title are emphasized: an
     /// accent-colored stroke (color) or an accent-filled background band
@@ -1527,6 +1531,9 @@ status_indicators = "symbols"
             heavy_fill.ui.pane_focus_border_style,
             PaneFocusBorderStyleConfig::Fill
         );
+
+        let block: Config = toml::from_str("[ui]\npane_border_weight = \"block\"").unwrap();
+        assert_eq!(block.ui.pane_border_weight, PaneBorderWeightConfig::Block);
 
         let unknown_weight = toml::from_str::<Config>("[ui]\npane_border_weight = \"bold\"")
             .unwrap_err()

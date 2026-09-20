@@ -488,7 +488,7 @@ fn render_pane_borders(
         let cell = &mut buf[(x, y)];
         cell.set_symbol(symbol);
         let style = if focused {
-            focused_border_style(app)
+            focused_border_cell_style(app)
         } else {
             Style::default().fg(app.palette.overlay0)
         };
@@ -711,13 +711,17 @@ fn line_cell_symbol(line: LineCell, weight: crate::config::PaneBorderWeightConfi
         (Weight::Thin, false, true, true, false) => "┐",
         (Weight::Thin, true, false, false, true) => "└",
         (Weight::Thin, true, false, true, false) => "┘",
+        (Weight::Block, false, false, false, false) => "",
+        (Weight::Block, _, _, _, _) => "█",
         _ => "",
     }
 }
 
-/// Style for a focused pane's border cells and title, per
-/// `PaneFocusBorderStyleConfig`. Unfocused panes always use
-/// `Style::default().fg(app.palette.overlay0)` regardless of this setting.
+/// Style for a focused pane's title text, per `PaneFocusBorderStyleConfig`.
+/// Unfocused panes always use `Style::default().fg(app.palette.overlay0)`
+/// regardless of this setting. Title glyphs (letters) only partially cover
+/// their cell, so `Fill`'s `bg` is always visible around them; this is safe
+/// to use unconditionally, unlike `focused_border_cell_style()`.
 fn focused_border_style(app: &AppState) -> Style {
     match app.pane_focus_border_style {
         crate::config::PaneFocusBorderStyleConfig::Fill => Style::default()
@@ -725,6 +729,18 @@ fn focused_border_style(app: &AppState) -> Style {
             .fg(panel_contrast_fg(&app.palette)),
         crate::config::PaneFocusBorderStyleConfig::Color => Style::default().fg(app.palette.accent),
     }
+}
+
+/// Style for a focused pane's border line cells. Identical to
+/// `focused_border_style()` except when `pane_border_weight` is `Block`: the
+/// full block glyph (`█`) covers every pixel of the cell, so `bg` never
+/// shows through. Painting it via `fg` instead makes the accent color
+/// visible regardless of the `fill`/`color` setting.
+fn focused_border_cell_style(app: &AppState) -> Style {
+    if app.pane_border_weight == crate::config::PaneBorderWeightConfig::Block {
+        return Style::default().fg(app.palette.accent);
+    }
+    focused_border_style(app)
 }
 
 pub(crate) fn render_selection_highlight<P: PartialEq>(
@@ -1245,6 +1261,108 @@ mod tests {
             buffer[(2, 1)].style().bg,
             Some(ratatui::style::Color::Reset)
         );
+    }
+
+    #[test]
+    fn block_weight_renders_solid_glyph_regardless_of_junction_shape() {
+        let mut app = AppState::test_new();
+        app.pane_border_weight = crate::config::PaneBorderWeightConfig::Block;
+        app.view.terminal_area = Rect::new(0, 0, 4, 4);
+        app.view.pane_infos = vec![
+            PaneInfo {
+                id: PaneId::from_raw(1),
+                rect: Rect::new(0, 0, 2, 2),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::TOP | Borders::LEFT,
+                is_focused: true,
+            },
+            PaneInfo {
+                id: PaneId::from_raw(2),
+                rect: Rect::new(2, 0, 2, 2),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::TOP | Borders::LEFT | Borders::RIGHT,
+                is_focused: false,
+            },
+            PaneInfo {
+                id: PaneId::from_raw(3),
+                rect: Rect::new(0, 2, 2, 2),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::TOP | Borders::LEFT | Borders::BOTTOM,
+                is_focused: false,
+            },
+            PaneInfo {
+                id: PaneId::from_raw(4),
+                rect: Rect::new(2, 2, 2, 2),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::ALL,
+                is_focused: false,
+            },
+        ];
+        let split_borders = vec![
+            crate::layout::SplitBorder {
+                pos: 2,
+                direction: ratatui::layout::Direction::Horizontal,
+                ratio: 0.5,
+                area: Rect::new(0, 0, 4, 4),
+                path: vec![],
+            },
+            crate::layout::SplitBorder {
+                pos: 2,
+                direction: ratatui::layout::Direction::Vertical,
+                ratio: 0.5,
+                area: Rect::new(0, 0, 4, 4),
+                path: vec![false],
+            },
+        ];
+        let ws = Workspace::test_new("test");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(4, 4)).unwrap();
+
+        terminal
+            .draw(|frame| render_view_pane_borders(&app, &ws, &split_borders, frame))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        // The crossing junction (2, 2) and a straight run (2, 1) both render
+        // the same solid block, unlike thin/heavy which vary by junction shape.
+        assert_eq!(buffer[(2, 2)].symbol(), "█");
+        assert_eq!(buffer[(2, 1)].symbol(), "█");
+    }
+
+    #[test]
+    fn block_weight_shows_accent_color_even_with_fill_focus_style() {
+        // The `fill` style paints bg(accent) + fg(panel_contrast_fg), but a
+        // full block glyph covers every pixel with fg, hiding the bg
+        // entirely. Border cell styling must fall back to fg(accent) for
+        // `Block` weight so the accent color is still visible.
+        let mut app = AppState::test_new();
+        app.pane_gaps = true;
+        app.pane_border_weight = crate::config::PaneBorderWeightConfig::Block;
+        app.pane_focus_border_style = crate::config::PaneFocusBorderStyleConfig::Fill;
+        app.view.terminal_area = Rect::new(0, 0, 4, 3);
+        app.view.pane_infos = vec![PaneInfo {
+            id: PaneId::from_raw(1),
+            rect: Rect::new(0, 0, 2, 3),
+            inner_rect: Rect::default(),
+            scrollbar_rect: None,
+            borders: Borders::ALL,
+            is_focused: true,
+        }];
+        let ws = Workspace::test_new("test");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(4, 3)).unwrap();
+
+        terminal
+            .draw(|frame| render_view_pane_borders(&app, &ws, &[], frame))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 1)].symbol(), "█");
+        assert_eq!(buffer[(0, 1)].style().fg, Some(app.palette.accent));
     }
 
     #[tokio::test]
