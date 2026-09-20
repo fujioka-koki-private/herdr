@@ -487,12 +487,17 @@ fn render_pane_borders(
         }
         let cell = &mut buf[(x, y)];
         cell.set_symbol(symbol);
-        let color = if focused {
-            app.palette.accent
+        let style = if focused {
+            // Fill the border cell's background with the accent color (not
+            // just its fg) so the focused pane reads as a solid highlighted
+            // band, not just a colored thin stroke.
+            Style::default()
+                .bg(app.palette.accent)
+                .fg(panel_contrast_fg(&app.palette))
         } else {
-            app.palette.overlay0
+            Style::default().fg(app.palette.overlay0)
         };
-        cell.set_style(Style::default().fg(color));
+        cell.set_style(style);
     }
 
     render_pane_border_titles(app, ws, pane_infos, frame);
@@ -654,12 +659,13 @@ fn render_pane_border_titles(
         if start_x >= end_x {
             continue;
         }
-        let color = if info.is_focused {
-            app.palette.accent
+        let mut style = if info.is_focused {
+            Style::default()
+                .bg(app.palette.accent)
+                .fg(panel_contrast_fg(&app.palette))
         } else {
-            app.palette.overlay0
+            Style::default().fg(app.palette.overlay0)
         };
-        let mut style = Style::default().fg(color);
         if info.is_focused {
             style = style.add_modifier(Modifier::BOLD);
         }
@@ -673,23 +679,28 @@ fn render_pane_border_titles(
     }
 }
 
+// Heavy box-drawing glyphs are used unconditionally (not just for the focused
+// pane) so the border stroke width stays uniform across all panes and only
+// the fg color (accent vs overlay0) signals focus. This keeps the focused
+// pane distinguishable at a glance without a thin/heavy seam mismatch where
+// focused and unfocused pane borders meet.
 fn line_cell_symbol(line: LineCell) -> &'static str {
     match (line.up, line.down, line.left, line.right) {
-        (true, true, true, true) => "┼",
-        (true, true, true, false) => "┤",
-        (true, true, false, true) => "├",
-        (true, false, true, true) => "┴",
-        (false, true, true, true) => "┬",
+        (true, true, true, true) => "╋",
+        (true, true, true, false) => "┫",
+        (true, true, false, true) => "┣",
+        (true, false, true, true) => "┻",
+        (false, true, true, true) => "┳",
         (true, true, false, false) | (true, false, false, false) | (false, true, false, false) => {
-            "│"
+            "┃"
         }
         (false, false, true, true) | (false, false, true, false) | (false, false, false, true) => {
-            "─"
+            "━"
         }
-        (false, true, false, true) => "┌",
-        (false, true, true, false) => "┐",
-        (true, false, false, true) => "└",
-        (true, false, true, false) => "┘",
+        (false, true, false, true) => "┏",
+        (false, true, true, false) => "┓",
+        (true, false, false, true) => "┗",
+        (true, false, true, false) => "┛",
         _ => "",
     }
 }
