@@ -862,6 +862,28 @@ impl PaneBordersConfig {
     }
 }
 
+/// Pane border glyph weight. All panes use the same weight regardless of
+/// focus; only color (and, with `fill`, background) signals focus, so a
+/// thin/heavy seam never appears where a focused and unfocused pane meet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneBorderWeightConfig {
+    #[default]
+    Thin,
+    Heavy,
+}
+
+/// How the focused pane's border (and title) is emphasized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneFocusBorderStyleConfig {
+    /// Foreground-only accent color, matching unfocused pane borders.
+    #[default]
+    Color,
+    /// Accent-filled background band, for a more prominent highlight.
+    Fill,
+}
+
 impl<'de> Deserialize<'de> for PaneBordersConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -936,6 +958,13 @@ pub struct UiConfig {
     /// disables them. Legacy booleans map true to auto and false to off.
     /// Default: auto.
     pub pane_borders: PaneBordersConfig,
+    /// Pane border glyph weight (thin or heavy box-drawing characters).
+    /// Default: thin.
+    pub pane_border_weight: PaneBorderWeightConfig,
+    /// How the focused pane's border and title are emphasized: an
+    /// accent-colored stroke (color) or an accent-filled background band
+    /// (fill). Default: color.
+    pub pane_focus_border_style: PaneFocusBorderStyleConfig,
     /// Draw borders along the outside edge of the pane area. Default: true.
     pub pane_outer_borders: bool,
     /// Draw interactive scrollbars beside terminal panes. Default: true.
@@ -1174,6 +1203,8 @@ impl Default for UiConfig {
             prompt_new_tab_name: true,
             prompt_new_workspace_name: false,
             pane_borders: PaneBordersConfig::Auto,
+            pane_border_weight: PaneBorderWeightConfig::Thin,
+            pane_focus_border_style: PaneFocusBorderStyleConfig::Color,
             pane_outer_borders: true,
             pane_scrollbars: true,
             pane_gaps: true,
@@ -1470,6 +1501,37 @@ status_indicators = "symbols"
             .unwrap_err()
             .to_string();
         assert!(wrong_type.contains("\"auto\", \"always\", \"off\", or a legacy boolean"));
+    }
+
+    #[test]
+    fn pane_border_weight_and_focus_style_default_and_parse() {
+        let default_config = Config::default();
+        assert_eq!(
+            default_config.ui.pane_border_weight,
+            PaneBorderWeightConfig::Thin
+        );
+        assert_eq!(
+            default_config.ui.pane_focus_border_style,
+            PaneFocusBorderStyleConfig::Color
+        );
+
+        let heavy_fill: Config = toml::from_str(
+            "[ui]\npane_border_weight = \"heavy\"\npane_focus_border_style = \"fill\"",
+        )
+        .unwrap();
+        assert_eq!(
+            heavy_fill.ui.pane_border_weight,
+            PaneBorderWeightConfig::Heavy
+        );
+        assert_eq!(
+            heavy_fill.ui.pane_focus_border_style,
+            PaneFocusBorderStyleConfig::Fill
+        );
+
+        let unknown_weight = toml::from_str::<Config>("[ui]\npane_border_weight = \"bold\"")
+            .unwrap_err()
+            .to_string();
+        assert!(unknown_weight.contains("thin") || unknown_weight.contains("heavy"));
     }
 
     #[test]

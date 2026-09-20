@@ -481,19 +481,14 @@ fn render_pane_borders(
         let focused = pane_infos
             .iter()
             .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps));
-        let symbol = line_cell_symbol(line);
+        let symbol = line_cell_symbol(line, app.pane_border_weight);
         if symbol.is_empty() {
             continue;
         }
         let cell = &mut buf[(x, y)];
         cell.set_symbol(symbol);
         let style = if focused {
-            // Fill the border cell's background with the accent color (not
-            // just its fg) so the focused pane reads as a solid highlighted
-            // band, not just a colored thin stroke.
-            Style::default()
-                .bg(app.palette.accent)
-                .fg(panel_contrast_fg(&app.palette))
+            focused_border_style(app)
         } else {
             Style::default().fg(app.palette.overlay0)
         };
@@ -660,9 +655,7 @@ fn render_pane_border_titles(
             continue;
         }
         let mut style = if info.is_focused {
-            Style::default()
-                .bg(app.palette.accent)
-                .fg(panel_contrast_fg(&app.palette))
+            focused_border_style(app)
         } else {
             Style::default().fg(app.palette.overlay0)
         };
@@ -679,29 +672,58 @@ fn render_pane_border_titles(
     }
 }
 
-// Heavy box-drawing glyphs are used unconditionally (not just for the focused
-// pane) so the border stroke width stays uniform across all panes and only
-// the fg color (accent vs overlay0) signals focus. This keeps the focused
-// pane distinguishable at a glance without a thin/heavy seam mismatch where
-// focused and unfocused pane borders meet.
-fn line_cell_symbol(line: LineCell) -> &'static str {
-    match (line.up, line.down, line.left, line.right) {
-        (true, true, true, true) => "╋",
-        (true, true, true, false) => "┫",
-        (true, true, false, true) => "┣",
-        (true, false, true, true) => "┻",
-        (false, true, true, true) => "┳",
-        (true, true, false, false) | (true, false, false, false) | (false, true, false, false) => {
-            "┃"
-        }
-        (false, false, true, true) | (false, false, true, false) | (false, false, false, true) => {
-            "━"
-        }
-        (false, true, false, true) => "┏",
-        (false, true, true, false) => "┓",
-        (true, false, false, true) => "┗",
-        (true, false, true, false) => "┛",
+// Glyph weight is uniform across all panes regardless of focus (not just for
+// the focused pane) so the border stroke width never varies within a single
+// stroke. Only the fg color (and, with `PaneFocusBorderStyleConfig::Fill`,
+// the bg fill) signals focus. This keeps the focused pane distinguishable at
+// a glance without a thin/heavy seam mismatch where focused and unfocused
+// pane borders meet.
+fn line_cell_symbol(line: LineCell, weight: crate::config::PaneBorderWeightConfig) -> &'static str {
+    use crate::config::PaneBorderWeightConfig as Weight;
+    match (weight, line.up, line.down, line.left, line.right) {
+        (Weight::Heavy, true, true, true, true) => "╋",
+        (Weight::Heavy, true, true, true, false) => "┫",
+        (Weight::Heavy, true, true, false, true) => "┣",
+        (Weight::Heavy, true, false, true, true) => "┻",
+        (Weight::Heavy, false, true, true, true) => "┳",
+        (Weight::Heavy, true, true, false, false)
+        | (Weight::Heavy, true, false, false, false)
+        | (Weight::Heavy, false, true, false, false) => "┃",
+        (Weight::Heavy, false, false, true, true)
+        | (Weight::Heavy, false, false, true, false)
+        | (Weight::Heavy, false, false, false, true) => "━",
+        (Weight::Heavy, false, true, false, true) => "┏",
+        (Weight::Heavy, false, true, true, false) => "┓",
+        (Weight::Heavy, true, false, false, true) => "┗",
+        (Weight::Heavy, true, false, true, false) => "┛",
+        (Weight::Thin, true, true, true, true) => "┼",
+        (Weight::Thin, true, true, true, false) => "┤",
+        (Weight::Thin, true, true, false, true) => "├",
+        (Weight::Thin, true, false, true, true) => "┴",
+        (Weight::Thin, false, true, true, true) => "┬",
+        (Weight::Thin, true, true, false, false)
+        | (Weight::Thin, true, false, false, false)
+        | (Weight::Thin, false, true, false, false) => "│",
+        (Weight::Thin, false, false, true, true)
+        | (Weight::Thin, false, false, true, false)
+        | (Weight::Thin, false, false, false, true) => "─",
+        (Weight::Thin, false, true, false, true) => "┌",
+        (Weight::Thin, false, true, true, false) => "┐",
+        (Weight::Thin, true, false, false, true) => "└",
+        (Weight::Thin, true, false, true, false) => "┘",
         _ => "",
+    }
+}
+
+/// Style for a focused pane's border cells and title, per
+/// `PaneFocusBorderStyleConfig`. Unfocused panes always use
+/// `Style::default().fg(app.palette.overlay0)` regardless of this setting.
+fn focused_border_style(app: &AppState) -> Style {
+    match app.pane_focus_border_style {
+        crate::config::PaneFocusBorderStyleConfig::Fill => Style::default()
+            .bg(app.palette.accent)
+            .fg(panel_contrast_fg(&app.palette)),
+        crate::config::PaneFocusBorderStyleConfig::Color => Style::default().fg(app.palette.accent),
     }
 }
 
@@ -1176,6 +1198,53 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(1, 1)].style().fg, Some(app.palette.accent));
         assert_eq!(buffer[(2, 1)].style().fg, Some(app.palette.overlay0));
+    }
+
+    #[test]
+    fn heavy_weight_and_fill_focus_style_render_opt_in_look() {
+        let mut app = AppState::test_new();
+        app.pane_gaps = true;
+        app.pane_border_weight = crate::config::PaneBorderWeightConfig::Heavy;
+        app.pane_focus_border_style = crate::config::PaneFocusBorderStyleConfig::Fill;
+        app.view.terminal_area = Rect::new(0, 0, 4, 3);
+        app.view.pane_infos = vec![
+            PaneInfo {
+                id: PaneId::from_raw(1),
+                rect: Rect::new(0, 0, 2, 3),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::ALL,
+                is_focused: true,
+            },
+            PaneInfo {
+                id: PaneId::from_raw(2),
+                rect: Rect::new(2, 0, 2, 3),
+                inner_rect: Rect::default(),
+                scrollbar_rect: None,
+                borders: Borders::ALL,
+                is_focused: false,
+            },
+        ];
+        let ws = Workspace::test_new("test");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(4, 3)).unwrap();
+
+        terminal
+            .draw(|frame| render_view_pane_borders(&app, &ws, &[], frame))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 1)].symbol(), "┃");
+        assert_eq!(buffer[(1, 1)].style().bg, Some(app.palette.accent));
+        assert_eq!(
+            buffer[(1, 1)].style().fg,
+            Some(panel_contrast_fg(&app.palette))
+        );
+        assert_eq!(buffer[(2, 1)].style().fg, Some(app.palette.overlay0));
+        assert_eq!(
+            buffer[(2, 1)].style().bg,
+            Some(ratatui::style::Color::Reset)
+        );
     }
 
     #[tokio::test]
